@@ -12,6 +12,14 @@ export default createStore({
     },
   },
   actions: mutationTypes => ({
+    // Merges by ID, so a saved approval status and any message the panel missed replace what it holds, and other
+    // threads stay as they are.
+    async fetchThread({ commit }, { threadId }) {
+      const response = await CopilotMessagesAPI.get(threadId);
+      response.data.payload.forEach(message =>
+        commit(mutationTypes.UPSERT, message)
+      );
+    },
     upsert({ commit }, data) {
       commit(mutationTypes.UPSERT, data);
     },

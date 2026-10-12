@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue';
 import { useAlert } from 'dashboard/composables';
+import { useEmitter } from 'dashboard/composables/emitter';
 import { useStore } from 'dashboard/composables/store';
 import Copilot from 'dashboard/components-next/copilot/Copilot.vue';
 import { useMapGetter } from 'dashboard/composables/store';
@@ -11,6 +12,7 @@ import { vOnClickOutside } from '@vueuse/components';
 import { FEATURE_FLAGS } from 'dashboard/featureFlags';
 import wootConstants from 'dashboard/constants/globals';
 import { MESSAGE_TYPE } from 'shared/constants/messages';
+import { BUS_EVENTS } from 'shared/constants/busEvents';
 
 const store = useStore();
 const { uiSettings, updateUISettings } = useUISettings();
@@ -95,11 +97,33 @@ const shouldShowCopilotPanel = computed(() => {
   return isCaptainEnabled && isCopilotPanelOpen && !uiFlags.value.fetchingList;
 });
 
+const isWorkflowsEnabled = computed(() =>
+  isFeatureEnabledonAccount.value(
+    currentAccountId.value,
+    FEATURE_FLAGS.COPILOT_WORKFLOWS
+  )
+);
+
 const handleReset = () => {
   selectedCopilotThreadId.value = null;
 };
 
-watch(() => currentChat.value?.id, handleReset);
+// A workflow thread works across conversations, and its answers and approval cards link to them, so opening one
+// keeps the thread. Otherwise a thread is about the conversation it was started in.
+watch(
+  () => currentChat.value?.id,
+  () => {
+    if (!isWorkflowsEnabled.value) handleReset();
+  }
+);
+
+// Events sent while the cable was down are lost, so the open thread is read again from the server.
+useEmitter(BUS_EVENTS.WEBSOCKET_RECONNECT, () => {
+  if (!selectedCopilotThreadId.value) return;
+  store.dispatch('copilotMessages/fetchThread', {
+    threadId: selectedCopilotThreadId.value,
+  });
+});
 
 const sendMessage = async payload => {
   const message = typeof payload === 'string' ? payload : payload.message;
@@ -122,7 +146,10 @@ const sendMessage = async payload => {
         message,
         ...(requestType && { request_type: requestType }),
       });
-      if (currentChat.value?.id === conversationId) {
+      if (
+        isWorkflowsEnabled.value ||
+        currentChat.value?.id === conversationId
+      ) {
         selectedCopilotThreadId.value = response.id;
       }
     }
